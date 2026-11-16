@@ -91,6 +91,8 @@ python coperate-tools/build_index.py
 
 生成 `我的工作区/index.html`，扫出所有项目的 `BOARD.html`，点哪个看哪个。总入口是生成物，不维护项目清单——新项目生成时自动收录。
 
+项目文件太多、看板太大？在 `coperate/board.conf` 里写 `tree = off`，就不扫描文件树、也不生成 Files 页（实测一份 61 文件的台账，`BOARD.html` 从 354 KB 降到 187 KB）。删掉这个文件即恢复。
+
 ## 备份（可选）
 
 ```bash
