@@ -1,0 +1,18 @@
+# 派生品，随时可从源重建
+BOARD.html
+
+# 本机配置，含你的路径
+config.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 工具缓存
+.workbuddy/
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+desktop.ini
