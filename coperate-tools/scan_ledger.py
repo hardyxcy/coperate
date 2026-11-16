@@ -6,7 +6,7 @@
 # serves: M-005#structure
 # serves_version: 1
 # kind: tool
-# version: 12
+# version: 13
 # changed: 2026-11-13 写报告强制 LF
 # idempotent: yes
 # side-effect: 只读，除生成一份校验报告外不改任何文件
@@ -360,9 +360,37 @@ def main():
                         "模板版本不一致：templates/%s 的 #%s 是 v%d，但 %s 是 v%d"
                         " —— 改主文档某节时，模板同名节必须一起涨版本"
                         % (fn, anchor, ver, m["file"], dv))
+    # 7. 任务台账：编号缺失与重复
+    tpath = os.path.join(ROOT, "TASKS.md")
+    if os.path.isfile(tpath):
+        traw = read(tpath)
+        tbody = re.sub(r"(?s)^---\s*\n.*?\n---\s*\n", "", traw, count=1)
+        cur = None
+        seen = {}
+        for ln in tbody.splitlines():
+            st = ln.strip()
+            mh = re.match(r"^##+\s+(.*)$", st)
+            if mh:
+                cur = mh.group(1).strip()
+                continue
+            mt = re.match(r"^-\s*\[( |x|X|~)\]\s*(?:([A-Z]+-\d+)\s+)?(.*)$", st)
+            if not mt or cur in (None, "已完成", "作废"):
+                continue
+            tid = mt.group(2) or ""
+            if not tid:
+                warnings.append(
+                    "任务缺编号：%s —— 加 T-xxx（新增取当前最大值+1），指派和看板都靠它定位"
+                    % st[:60])
+            else:
+                seen.setdefault(tid, []).append(st[:40])
+        for tid, hits in seen.items():
+            if len(hits) > 1:
+                problems.append("任务编号重复：%s 出现了 %d 次 —— 编号永不复用，必须改掉"
+                                % (tid, len(hits)))
+
     # 输出
     print("=" * 62)
-    print("[scan_ledger.py v12 · cap=verify-ledger · tool]")
+    print("[scan_ledger.py v13 · cap=verify-ledger · tool]")
     print("台账校验 · %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
     print("=" * 62)
     print("主文档 %d · 决策 %d（生效 %d）" % (len(mains), len(decs), len(active)))
