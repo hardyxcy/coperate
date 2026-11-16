@@ -286,7 +286,8 @@ def main():
 
     # 5. 外来文件检查
     ROOT_OK_FILES = {"AGENTS.md", "QUEUE.md", "TASKS.md", "build.py",
-                     "BOARD.html", ".gitignore", ".gitattributes", ".scanignore"}
+                     "BOARD.html", ".gitignore", ".gitattributes", ".scanignore",
+                     "board.conf"}
     ROOT_OK_DIRS = {"docs", "decisions", "work", "assets", "tools",
                     "templates", "inbox", ".workbuddy", ".git", "__pycache__"}
 

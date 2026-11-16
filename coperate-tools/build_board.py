@@ -6,8 +6,8 @@
 # serves: M-005#structure
 # serves_version: 1
 # kind: tool
-# version: 45
-# changed: 2026-11-16 v45 任务支持作废段 [~]、@after 依赖、段内拓扑排序与环形依赖标注；作废不计入完成
+# version: 46
+# changed: 2026-11-16 v46 台账根 board.conf 可写 tree = off，跳过文件树扫描与文件页（项目文件多时能显著减小 BOARD.html）
 # idempotent: yes
 # side-effect: 覆盖重写 BOARD.html，不改任何源文件
 # ---
@@ -540,7 +540,31 @@ ROLE = {
     "tools": ("工具", "mold"),
 }
 
-tree = walk_project()
+# 可选开关：台账根放 board.conf，写 tree = off 就不生成「文件」页
+BOARD_CONF = os.path.join(ROOT, "board.conf")
+
+
+def conf_value(key, default=""):
+    if not os.path.isfile(BOARD_CONF):
+        return default
+    try:
+        with open(BOARD_CONF, encoding="utf-8") as _f:
+            _txt = _f.read()
+    except OSError:
+        return default
+    for _ln in _txt.splitlines():
+        _s = _ln.strip()
+        if not _s or _s.startswith("#") or "=" not in _s:
+            continue
+        _k, _v = _s.split("=", 1)
+        if _k.strip() == key:
+            return _v.strip()
+    return default
+
+
+TREE_ON = conf_value("tree", "on").lower() not in ("off", "false", "0", "no")
+
+tree = walk_project() if TREE_ON else []
 
 
 def decorate(ns, in_ledger=False, top=False):
@@ -787,6 +811,7 @@ DATA = {
     "images": images,
     "scripts": scripts,
     "tree": tree,
+    "treeon": TREE_ON,
     "root": os.path.abspath(ROOT).replace("\\", "/"),
     "treeroot": os.path.abspath(TREE_ROOT).replace("\\", "/"),
     "inbox": inbox_items,
@@ -1561,7 +1586,7 @@ var issues = [
     ["mains","Docs",h.mains],["decisions","Decisions",h.decisions],
     ["queue","Pending",h.queue],["works","Drafts",h.works],["tree","Files",h.files],
     ["scripts","Tools",h.scripts],["tasks","ToDo",h.tasks_open]
-  ];
+  ].filter(t => DATA.treeon || t[0] !== "tree");
   document.getElementById("nav").innerHTML = tabs.map((t,i)=>
     '<button data-tab="'+t[0]+'" class="'+(i===0?"on":"")+'">'+t[1]+
     (t[2]!==""?'<span class="n">'+t[2]+'</span>':'')+'</button>').join("");
@@ -1603,7 +1628,9 @@ var issues = [
   let wk = "";
   wk += '<p class="hint"><b>工作稿</b>指 <code>work/</code> 下的过程产物（' + DATA.works.length
      + ' 篇）和素材图（' + DATA.images.length + ' 张）。它们记录的是「当时怎么想的」，<b>不构成任何依据</b>。'
-     + '主文档、决策、脚本各有自己的页；项目共 <b>' + h.files + '</b> 个文件，完整清单见「文件」页。</p>';
+     + (DATA.treeon
+        ? '主文档、决策、脚本各有自己的页；项目共 <b>' + h.files + '</b> 个文件，完整清单见「文件」页。</p>'
+        : '主文档、决策、脚本各有自己的页；文件页已在 <code>board.conf</code> 里关闭（<code>tree = off</code>），项目文件直接用编辑器看。</p>');
   if (DATA.inbox.length) {
     wk += '<div class="hint" style="background:#FCEBEB;color:#A32D2D">'
        + '<b>' + DATA.inbox.length + ' 个文件在 inbox/ 待接收</b> —— 外部丢进来的素材，还没归类。'
@@ -1813,7 +1840,7 @@ html_out = (TEMPLATE
 with open(OUT, "w", encoding="utf-8", newline="\n") as f:
     f.write(html_out)
 
-print("[build_board.py v45 · cap=build-board · tool]")
+print("[build_board.py v46 · cap=build-board · tool]")
 print("BOARD.html 已生成")
 if tasks["void"]:
     print("  作废 %d 条（不算完成）" % len(tasks["void"]))
