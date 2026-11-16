@@ -1,0 +1,9 @@
+{
+  "_说明": "复制成 config.json 后填写。不填则 sync_backup.py 不会备份任何东西。",
+  "backup_targets": [
+    "//nas/backup"
+  ],
+  "backup_projects": [
+    "coperate"
+  ]
+}
