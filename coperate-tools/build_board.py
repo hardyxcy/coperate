@@ -6,8 +6,8 @@
 # serves: M-005#structure
 # serves_version: 1
 # kind: tool
-# version: 44
-# changed: 2026-11-15 v44 项目根判定加资产目录自证（E:/Projects 也有 AGENTS.md 会误判）；getsize 与软链容错，坏文件不再炸整页
+# version: 45
+# changed: 2026-11-16 v45 任务支持作废段 [~]、@after 依赖、段内拓扑排序与环形依赖标注；作废不计入完成
 # idempotent: yes
 # side-effect: 覆盖重写 BOARD.html，不改任何源文件
 # ---
@@ -595,27 +595,34 @@ if os.path.isdir(INBOX):
         })
 
 # ---------- 任务 ----------
-tasks = {"blocked": [], "doing": [], "todo": [], "done": []}
+tasks = {"blocked": [], "doing": [], "todo": [], "done": [], "void": []}
 tpath = os.path.join(ROOT, "TASKS.md")
 if os.path.exists(tpath):
     text = read(tpath)
     _, body = parse_front(text)
     cur = None
-    label_map = {"阻塞": "blocked", "进行中": "doing", "待办": "todo", "已完成": "done"}
+    label_map = {"阻塞": "blocked", "进行中": "doing", "待办": "todo",
+                 "已完成": "done", "作废": "void"}
     for ln in body.splitlines():
         s = ln.strip()
         mh = re.match(r"^##+\s+(.*)$", s)
         if mh:
             cur = label_map.get(mh.group(1).strip())
             continue
-        mt = re.match(r"^-\s*\[( |x|X)\]\s*(?:([A-Z]+-\d+)\s+)?(.*)$", s)
+        mt = re.match(r"^-\s*\[( |x|X|~)\]\s*(?:([A-Z]+-\d+)\s+)?(.*)$", s)
         if mt and cur:
             tid = mt.group(2) or ""
             raw = mt.group(3).strip()
+            # 依赖：@after T-021,T-023（逗号或空格分隔，可写多个）
+            aft = re.search(r"@after\s+([A-Z]+-\d+(?:[,\s]+[A-Z]+-\d+)*)", raw)
+            after = re.findall(r"[A-Z]+-\d+", aft.group(1)) if aft else []
+            if aft:
+                raw = (raw[:aft.start()] + raw[aft.end():]).strip()
             am = re.search(r"@(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)", raw)
-            dm = re.search(r"\u2192\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)", raw)
+            dm = re.search(r"\u2192\s*(?:作废\s*)?(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)", raw)
             start = am.group(1) if am else ""
             done_at = dm.group(1) if dm else ""
+            mark = mt.group(1).lower()
             if dm:
                 raw = raw[:dm.start()].strip()
             if am:
@@ -623,11 +630,15 @@ if os.path.exists(tpath):
             tasks[cur].append({
                 "tid": tid,
                 "text": raw.strip(),
-                "done": mt.group(1).lower() == "x",
+                "done": mark == "x",
+                "void": mark == "~",
+                "after": after,
                 "start": start,
                 "done_at": done_at,
                 "stale": False,
                 "elapsed": "",
+                "wait": [],
+                "cycle": False,
             })
 
 def parse_dt(s):
@@ -667,6 +678,68 @@ for _grp in ("doing", "todo", "done"):
         if _grp == "doing" and st and (_now - st).days > STALE_TASK_DAYS:
             t["stale"] = True
             stale_tasks += 1
+
+# ---------- 依赖排序与阻塞标注 ----------
+_byid_all = {}
+for _g in tasks:
+    for _t in tasks[_g]:
+        if _t["tid"]:
+            _byid_all[_t["tid"]] = _t
+
+
+def _topo(group):
+    """段内拓扑排序：依赖在前，同层按创建时间升序；返回 (有序列表, 环内条目)。"""
+    items = list(tasks[group])
+    byid = {t["tid"]: t for t in items if t["tid"]}
+
+    def key(tid):
+        return (byid[tid].get("start") or "9999", tid)
+
+    indeg = {tid: 0 for tid in byid}
+    children = {}
+    for t in items:
+        if not t["tid"]:
+            continue
+        for dep in t["after"]:
+            if dep in byid and dep != t["tid"]:
+                indeg[t["tid"]] += 1
+                children.setdefault(dep, []).append(t["tid"])
+
+    ready = sorted([k for k, v in indeg.items() if v == 0], key=key)
+    out = []
+    while ready:
+        tid = ready.pop(0)
+        out.append(byid[tid])
+        for c in children.get(tid, []):
+            indeg[c] -= 1
+            if indeg[c] == 0:
+                ready.append(c)
+        ready.sort(key=key)
+
+    got = {o["tid"] for o in out}
+    cycle = [t for t in items if t["tid"] and t["tid"] not in got]
+    loose = [t for t in items if not t["tid"]]
+    return out + cycle + loose, cycle
+
+
+for _grp in ("blocked", "doing", "todo"):
+    _sorted, _cycle = _topo(_grp)
+    tasks[_grp] = _sorted
+    for t in _cycle:
+        t["cycle"] = True
+    for t in tasks[_grp]:
+        if t["cycle"]:
+            continue
+        for dep in t["after"]:
+            d = _byid_all.get(dep)
+            if d is None:
+                t["wait"].append("依赖 %s 不存在" % dep)
+            elif d["done"]:
+                continue
+            elif d["void"]:
+                t["wait"].append("%s 已作废" % dep)
+            else:
+                t["wait"].append("等 %s" % dep)
 
 # ---------- 汇总 ----------
 active_d = [d for d in decisions if d["status"] == "active"]
@@ -928,6 +1001,8 @@ section.on{display:block}
 .titem .bx{width:14px;height:14px;border:1.5px solid var(--t3);border-radius:4px;flex:none;margin-top:3px}
 .titem.done .bx{background:#0F6E56;border-color:#0F6E56}
 .titem.done .tx{color:var(--t3);text-decoration:line-through}
+.titem.voided .tx{color:var(--t3);text-decoration:line-through}
+.titem.voided .bx{border-color:var(--t3);background:var(--t3)}
 .titem .tx{flex:1}
 .tid{font-family:var(--mono);font-size:10.5px;color:var(--t2);background:rgba(0,0,0,.05);padding:1px 6px;border-radius:4px;flex:none;margin-top:2px}
 .tmeta{font-family:var(--mono);font-size:11px;color:var(--t3);flex:none;margin-left:10px;display:inline-flex;gap:6px;align-items:center;white-space:nowrap}
@@ -1656,7 +1731,7 @@ var issues = [
   document.getElementById("s-scripts").innerHTML = sc;
 
   // 任务
-  const groups=[["blocked","阻塞","#E24B4A"],["doing","进行中","#BA7517"],["todo","待办","#888780"],["done","已完成","#0F6E56"]];
+  const groups=[["blocked","阻塞","#E24B4A"],["doing","进行中","#BA7517"],["todo","待办","#888780"],["done","已完成","#0F6E56"],["void","作废","#B0B4B8"]];
   let tk="";
   groups.forEach(g=>{
     const arr=DATA.tasks[g[0]];
@@ -1671,9 +1746,11 @@ var issues = [
       } else if (t.start) {
         meta = sh(t.start) + (t.elapsed ? " · 已挂 " + t.elapsed : "");
       }
-      const tag = t.stale ? '<span class="tag t-warn">可能已完成未勾</span>' : '';
+      let tag = t.stale ? '<span class="tag t-warn">可能已完成未勾</span>' : '';
+      if (t.cycle) tag += '<span class="tag t-warn">环形依赖</span>';
+      (t.wait || []).forEach(function(w){ tag += '<span class="tag t-warn">' + esc(w) + '</span>'; });
       const tid = t.tid ? '<span class="tid">'+esc(t.tid)+'</span>' : '';
-      tk += '<div class="titem'+(t.done?" done":"")+'"><span class="bx"></span>'+tid+'<span class="tx">'+esc(t.text)+'</span>'
+      tk += '<div class="titem'+(t.done?" done":"")+(t.void?" voided":"")+'"><span class="bx"></span>'+tid+'<span class="tx">'+esc(t.text)+'</span>'
           + '<span class="tmeta">'+esc(meta)+tag+'</span></div>';
     });
     tk += '</div>';
@@ -1736,8 +1813,10 @@ html_out = (TEMPLATE
 with open(OUT, "w", encoding="utf-8", newline="\n") as f:
     f.write(html_out)
 
-print("[build_board.py v44 · cap=build-board · tool]")
+print("[build_board.py v45 · cap=build-board · tool]")
 print("BOARD.html 已生成")
+if tasks["void"]:
+    print("  作废 %d 条（不算完成）" % len(tasks["void"]))
 print("  主文档 %d · 决策 %d（生效 %d）· 待拍板 %d · 工作稿 %d（孤儿 %d）· 脚本 %d · 漂移 %d"
       % (health["mains"], len(decisions), health["decisions"], health["queue"],
          health["works"], health["orphan"], health["scripts"], health["drift"]))
